@@ -23,14 +23,10 @@ By default, the extension will:
 
 ---
 
-## 🧩 Installation (Temporary Testing)
+## 🧩 Installation
 
-1. Clone or download this repository
-2. Go to `about:debugging` in Firefox
-3. Click **"This Firefox"** > **"Load Temporary Add-on…"**
-4. Select the `manifest.json` file from this project folder
-
-To use permanently, submit to AMO (addons.mozilla.org) or use a developer profile.
+Install the extension directly from the official Firefox Add-ons site:
+[https://addons.mozilla.org/en-US/firefox/addon/sort-capital-one-offers/](https://addons.mozilla.org/en-US/firefox/addon/sort-capital-one-offers/)
 
 ---
 
@@ -48,8 +44,3 @@ To use permanently, submit to AMO (addons.mozilla.org) or use a developer profil
 MIT License — feel free to fork, modify, and improve.
 
 ---
-
-## ☕ Support
-
-If this extension saves you time or boosts your miles, consider [buying me a coffee](https://buymeacoffee.com/yourusername)!
-

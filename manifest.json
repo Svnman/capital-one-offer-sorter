@@ -1,0 +1,33 @@
+{
+    "manifest_version": 2,
+    "name": "Sort Capital One Offers",
+    "version": "1.4",
+    "description": "Automatically sorts Capital One Offers by miles.",
+    "permissions": [
+        "activeTab",
+        "storage"
+    ],
+    "content_scripts": [
+        {
+            "matches": [
+                "*://capitaloneoffers.com/c1-offers/*",
+                "*://*.capitaloneoffers.com/*",
+                "*://capitalone.com/offers/*",
+                "*://*.capitalone.com/offers/*"
+            ],
+            "js": ["content.js"],
+            "run_at": "document_idle"
+        }
+    ],
+    "background": {
+        "scripts": ["background.js"]
+    },
+    "browser_action": {
+        "default_icon": "icon.png",
+        "default_title": "Sort Capital One Offers",
+        "default_popup": "popup.html"
+    },
+    "icons": {
+        "48": "icon.png"
+    }
+}

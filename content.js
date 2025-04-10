@@ -1,6 +1,7 @@
 let originalWrappers = []; // Store the original offer wrappers
 let isSortingEnabled = true; // Track the toggle state
 let isSortingInProgress = false; // Prevent multiple sorting processes
+let preferMultiplierMiles = false; // New toggle for sorting preference
 
 function showWaitMessage() {
     requestAnimationFrame(() => {
@@ -29,13 +30,13 @@ function fadeWaitMessage() {
 }
 
 function waitForOffersAndSort() {
-    showWaitMessage(); // Show message immediately
+    showWaitMessage();
 
     browser.runtime.sendMessage({ action: "getToggleState" }, (response) => {
         isSortingEnabled = response.isSortingEnabled;
+        preferMultiplierMiles = response.preferMultiplierMiles || false;
         console.log("Initial sorting state:", isSortingEnabled ? "Enabled" : "Disabled");
 
-        // Redundant re-show to override React wipes
         setTimeout(showWaitMessage, 100);
         setTimeout(showWaitMessage, 300);
 
@@ -58,6 +59,12 @@ function waitForOffersAndSort() {
                 console.log("Reverting offers to original order...");
                 revertOffers();
                 fadeWaitMessage();
+            }
+        } else if (message.action === "toggleSortPreference") {
+            preferMultiplierMiles = message.value;
+            console.log("Sort preference set to:", preferMultiplierMiles ? "Xmiles first" : "#miles first");
+            if (isSortingEnabled && !isSortingInProgress) {
+                startSorting();
             }
         }
     });
@@ -224,21 +231,32 @@ function sortOffers(container) {
                 return { element: wrapper, value, type };
             })
             .sort((a, b) => {
-                if (a.type !== b.type) {
-                    return a.type - b.type;
+                // Set dynamic priority based on toggle
+                const priorityOrder = preferMultiplierMiles
+                    ? [1, 0, 2] // Xmiles first
+                    : [0, 1, 2]; // #miles first
+
+                const typeA = priorityOrder.indexOf(a.type);
+                const typeB = priorityOrder.indexOf(b.type);
+
+                if (typeA !== typeB) {
+                    return typeA - typeB;
                 }
+
+                // Within same type, sort by value descending
                 return b.value - a.value;
             });
 
         requestAnimationFrame(() => {
             offerWrappers.forEach(wrapper => gridContainer.removeChild(wrapper));
             sortedWrappers.forEach(item => gridContainer.appendChild(item.element));
-            console.log(`Sorted ${sortedWrappers.length} offers successfully!`);
+            console.log(`Sorted ${sortedWrappers.length} offers successfully with ${preferMultiplierMiles ? 'Xmiles' : '#miles'} priority.`);
         });
     } catch (error) {
         console.error("Error sorting offers:", error);
     }
 }
+
 
 function revertOffers() {
     try {

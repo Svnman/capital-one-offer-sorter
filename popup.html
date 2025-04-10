@@ -1,128 +1,182 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Sort Capital One Offers</title>
-  <style>
-    body {
-      width: 220px;
-      padding: 10px;
-      font-family: Arial, sans-serif;
-      background-color: #f9f9f9;
-    }
-    .toggle-container {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      background: #fff;
-      padding: 10px;
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-    label {
-      font-size: 14px;
-    }
-    .slider-toggle {
-      position: relative;
-      width: 50px;
-      height: 24px;
-    }
-    .slider-toggle input {
-      opacity: 0;
-      width: 100%;
-      height: 100%;
-      cursor: pointer;
-      z-index: 2;
-      position: absolute;
-    }
-    .slider {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #ccc;
-      border-radius: 24px;
-      transition: background-color 0.3s;
-      z-index: 1;
-    }
-    .slider:before {
-      content: "";
-      position: absolute;
-      width: 20px;
-      height: 20px;
-      left: 2px;
-      bottom: 2px;
-      background: white;
-      border-radius: 50%;
-      transition: transform 0.3s;
-    }
-    input:checked + .slider {
-      background: #4CAF50;
-    }
-    input:checked + .slider:before {
-      transform: translateX(26px);
-    }
+    <title>Sort Capital One Offers</title>
+    <style>
+        body {
+            width: 230px;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            color: #333;
+        }
 
-    .note {
-      margin-top: 10px;
-      font-size: 12px;
-      color: #666;
-      text-align: center;
-      opacity: 0.5;
-      transition: opacity 0.3s;
-    }
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #fff;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
 
-    .donation-section {
-      margin-top: 15px;
-      padding: 10px;
-      border-top: 1px solid #ddd;
-      text-align: center;
-      background-color: #fff;
-      border-radius: 5px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
-    .donation-section h3 {
-      margin: 0 0 5px;
-      font-size: 14px;
-      color: #555;
-    }
-    .donation-section p {
-      margin: 5px 0;
-      color: #666;
-      font-size: 12px;
-    }
-    .donation-section a {
-      display: inline-block;
-      background-color: #ffdd57;
-      color: #333;
-      text-decoration: none;
-      padding: 5px 10px;
-      border-radius: 3px;
-      font-weight: bold;
-      transition: background-color 0.3s;
-    }
-    .donation-section a:hover {
-      background-color: #ffc107;
-    }
-  </style>
+        label {
+            font-size: 14px;
+        }
+
+        .slider-toggle {
+            position: relative;
+            width: 50px;
+            height: 24px;
+        }
+
+        .slider-toggle input {
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+            z-index: 2;
+            position: absolute;
+        }
+
+        .slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #ccc;
+            border-radius: 24px;
+            transition: background-color 0.3s;
+            z-index: 1;
+        }
+
+        .slider:before {
+            content: "";
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            left: 2px;
+            bottom: 2px;
+            background: white;
+            border-radius: 50%;
+            transition: transform 0.3s;
+        }
+
+        input:checked + .slider {
+            background: #4CAF50;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+
+        .sort-header {
+            font-size: 13px;
+            font-weight: bold;
+            margin: 5px 0 5px 2px;
+        }
+
+        .sort-toggle-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #fff;
+            padding: 8px 10px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .sort-label {
+            font-size: 13px;
+            font-weight: bold;
+        }
+
+.note {
+    font-size: 13px;
+    text-align: center;
+    color: #333;
+    font-weight: 500;
+    margin-top: 8px;
+    padding: 6px 10px;
+    background-color: #fff7d6;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+@keyframes pulseZoom {
+    0%   { transform: scale(1); }
+    50%  { transform: scale(1.08); }
+    100% { transform: scale(1); }
+}
+        .donation-section {
+            margin-top: 14px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            background-color: #fff;
+            border-radius: 5px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .donation-section h3 {
+            margin: 0 0 5px;
+            font-size: 14px;
+            color: #555;
+        }
+
+        .donation-section p {
+            margin: 5px 0;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .donation-section a {
+            display: inline-block;
+            background-color: #ffdd57;
+            color: #333;
+            text-decoration: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+
+        .donation-section a:hover {
+            background-color: #ffc107;
+        }
+    </style>
 </head>
 <body>
-  <div class="toggle-container">
-    <label for="toggle">Enable Sorting</label>
-    <div class="slider-toggle">
-      <input type="checkbox" id="toggle" />
-      <span class="slider"></span>
+    <div class="toggle-container">
+        <label for="toggle">Enable Sorting</label>
+        <div class="slider-toggle">
+            <input type="checkbox" id="toggle" />
+            <span class="slider"></span>
+        </div>
     </div>
-  </div>
 
-  <div class="note" id="popup-wait-msg">Sorting takes a few seconds…</div>
+    <div class="sort-header">Sort by:</div>
+    <div class="sort-toggle-container">
+        <span class="sort-label">#Miles</span>
+        <div class="slider-toggle">
+            <input type="checkbox" id="sortPreference" />
+            <span class="slider"></span>
+        </div>
+        <span class="sort-label">XMiles</span>
+    </div>
 
-  <div class="donation-section">
-    <h3>Support This Extension</h3>
-    <p>If you find this extension helpful, consider buying me a coffee!</p>
-    <a href="https://buymeacoffee.com/svnman" target="_blank">Buy Me a Coffee</a>
-  </div>
+    <div class="note" id="popup-wait-msg">Sorting takes a few seconds…</div>
 
-  <script src="popup.js"></script>
+    <div class="donation-section">
+        <h3>Support This Extension</h3>
+        <p>If you find this helpful, consider buying me a coffee!</p>
+        <a href="https://buymeacoffee.com/svnman" target="_blank">Buy Me a Coffee</a>
+    </div>
+
+    <script src="popup.js"></script>
 </body>
 </html>

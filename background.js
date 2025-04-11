@@ -1,38 +1,60 @@
 let isSortingEnabled = true;
 let preferMultiplierMiles = false;
 
-// Handle messages from content and popup scripts
+let shoppingSortingEnabled = true;
+let preferPercentBack = false;
+
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "getToggleState") {
-        sendResponse({ 
-            isSortingEnabled, 
-            preferMultiplierMiles 
-        });
-    } 
-    else if (message.action === "setToggleState") {
-        isSortingEnabled = message.value;
-        // Notify all tabs of the state change
-        broadcastToTabs({ action: "toggleStateChanged", value: isSortingEnabled });
-        sendResponse({ success: true });
+    switch (message.action) {
+        case "getToggleState":
+            sendResponse({ 
+                isSortingEnabled, 
+                preferMultiplierMiles,
+                shoppingSortingEnabled,
+                preferPercentBack
+            });
+            break;
+
+        case "setToggleState":
+            isSortingEnabled = message.value;
+            broadcastToTabs({ action: "toggleStateChanged", value: isSortingEnabled });
+            sendResponse({ success: true });
+            break;
+
+        case "setSortPreference":
+            preferMultiplierMiles = message.value;
+            broadcastToTabs({ action: "toggleSortPreference", value: preferMultiplierMiles });
+            sendResponse({ success: true });
+            break;
+
+        case "setShoppingToggle":
+            shoppingSortingEnabled = message.value;
+            broadcastToTabs({ action: "shoppingToggleChanged", value: shoppingSortingEnabled });
+            sendResponse({ success: true });
+            break;
+
+        case "setShoppingPreference":
+            preferPercentBack = message.value;
+            broadcastToTabs({ action: "shoppingPreferenceChanged", value: preferPercentBack });
+            sendResponse({ success: true });
+            break;
+
+        default:
+            console.warn("Unknown message action:", message.action);
+            break;
     }
-    else if (message.action === "setSortPreference") {
-        preferMultiplierMiles = message.value;
-        // Notify all tabs of the preference change
-        broadcastToTabs({ action: "toggleSortPreference", value: preferMultiplierMiles });
-        sendResponse({ success: true });
-    }
+
     return true;
 });
 
-// Function to broadcast a message to all open tabs
 function broadcastToTabs(payload) {
     browser.tabs.query({}, (tabs) => {
-        for (const tab of tabs) {
+        tabs.forEach(tab => {
             if (tab.id) {
-                browser.tabs.sendMessage(tab.id, payload).catch((err) => {
-                    // Ignore tabs that don't have the content script injected
+                browser.tabs.sendMessage(tab.id, payload).catch(() => {
+                    // Content script might not be loaded on this tab; safe to ignore
                 });
             }
-        }
+        });
     });
 }

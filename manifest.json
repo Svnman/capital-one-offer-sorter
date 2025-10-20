@@ -1,13 +1,11 @@
 {
-    "manifest_version": 3,
+    "manifest_version": 2,
     "name": "Sort Capital One Offers and Shopping Deals",
     "version": "2.1",
     "description": "Automatically sorts Capital One Offers and Shopping Deals.",
     "permissions": [
         "activeTab",
-        "storage"
-    ],
-    "host_permissions": [
+        "storage",
         "*://capitaloneoffers.com/*",
         "*://*.capitaloneoffers.com/*",
         "*://capitalone.com/offers/*",
@@ -30,9 +28,10 @@
         }
     ],
     "background": {
-        "scripts": ["background.js"]
+        "scripts": ["background.js"],
+        "persistent": false
     },
-    "action": {
+    "browser_action": {
         "default_icon": "icon.png",
         "default_title": "Sort Capital One Offers",
         "default_popup": "popup.html"

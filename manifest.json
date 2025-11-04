@@ -1,7 +1,7 @@
 {
     "manifest_version": 2,
     "name": "Sort Capital One Offers and Shopping Deals",
-    "version": "2.1",
+    "version": "2.2",
     "description": "Automatically sorts Capital One Offers and Shopping Deals.",
     "permissions": [
         "activeTab",

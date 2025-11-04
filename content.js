@@ -25,6 +25,175 @@ const isShoppingPage = window.location.href.includes("shopping") || document.que
 console.log("🔍 Capital One Sorter: Page type detection - isShoppingPage:", isShoppingPage);
 console.log("🔍 Capital One Sorter: URL contains 'shopping':", window.location.href.includes("shopping"));
 console.log("🔍 Capital One Sorter: Found first-deals-container:", !!document.querySelector('[data-testid="first-deals-container"]'));
+// Intercept fetch calls to capture the API URL and cursor pattern
+const originalFetch = window.fetch;
+window._capitalOneApiInfo = null;
+
+window.fetch = function(...args) {
+    const url = args[0];
+    const urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : url);
+    
+    // Check if this looks like the Capital One offers API call
+    if (urlStr && typeof urlStr === 'string' && 
+        (urlStr.includes('/feed/') || urlStr.includes('cursor')) && 
+        (urlStr.includes('numberOfColumnsInGrid') || urlStr.includes('viewInstanceId') || urlStr.includes('contentSlug'))) {
+        
+        console.log("💳 Capital One Sorter: Intercepted fetch API call:", urlStr);
+        
+        // Extract cursor from URL
+        try {
+            // Handle relative URLs
+            const fullUrl = urlStr.startsWith('http') ? urlStr : new URL(urlStr, window.location.origin).href;
+            const urlObj = new URL(fullUrl);
+            const cursor = urlObj.searchParams.get('cursor');
+            
+            if (cursor) {
+                window._capitalOneApiInfo = {
+                    url: fullUrl,
+                    cursor: cursor,
+                    baseUrl: fullUrl.split('?')[0],
+                    params: Object.fromEntries(urlObj.searchParams)
+                };
+                console.log("💳 Capital One Sorter: Captured API info from fetch:", {
+                    baseUrl: window._capitalOneApiInfo.baseUrl,
+                    params: Object.keys(window._capitalOneApiInfo.params),
+                    cursor: cursor.substring(0, 50) + '...'
+                });
+                
+                // AUTO-LOAD: After capturing the first cursor, automatically trigger more loads
+                if (!window._capitalOneApiInfo._autoLoadTriggered) {
+                    window._capitalOneApiInfo._autoLoadTriggered = true;
+                    console.log("💳 Capital One Sorter: Starting auto-load of additional offers...");
+                    
+                    // Wait for React to process this fetch, then start auto-loading
+                    setTimeout(() => {
+                        autoLoadMoreOffers(cursor, urlObj);
+                    }, 1000);
+                }
+            } else {
+                console.log("💳 Capital One Sorter: Found API URL but no cursor parameter");
+            }
+            
+            // Intercept the response to capture React's handler
+            const fetchPromise = originalFetch.apply(this, args);
+            return fetchPromise.then(response => {
+                // Clone the response so we can read it without consuming it
+                const clonedResponse = response.clone();
+                
+                // Read the response to see what React expects
+                clonedResponse.json().then(data => {
+                    console.log("💳 Capital One Sorter: Intercepted fetch response (from React), data keys:", Object.keys(data));
+                    // Store the cursor from the response for the next call
+                    if (data.cursor) {
+                        window._capitalOneApiInfo.cursor = data.cursor;
+                        console.log("💳 Capital One Sorter: Updated cursor from response");
+                    }
+                    
+                    // Check if React processed this (offer count should increase)
+                    setTimeout(() => {
+                        const offerCount = document.querySelectorAll('div[role="button"][data-testid^="feed-tile-"]').length;
+                        console.log("💳 Capital One Sorter: Offer count after intercepted fetch (React):", offerCount);
+                    }, 500);
+                }).catch(e => {
+                    // Response might not be JSON
+                });
+                
+                return response;
+            });
+        } catch (e) {
+            console.log("💳 Capital One Sorter: Error parsing fetch URL:", e, "URL was:", urlStr);
+        }
+    }
+    
+    return originalFetch.apply(this, args);
+};
+
+// Function to automatically load more offers using page context injection
+async function autoLoadMoreOffers(initialCursor, initialUrlObj) {
+    console.log("💳 Capital One Sorter: autoLoadMoreOffers started");
+    
+    // Try to inject code into page context to create trusted events
+    try {
+        const script = document.createElement('script');
+        script.textContent = `
+            (async function() {
+                console.log("💳 Capital One Sorter: Injected page-context script running");
+                const maxClicks = 10;
+                const delayMs = 2000;
+                let clickCount = 0;
+                
+                for (let i = 0; i < maxClicks; i++) {
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    
+                    const button = document.querySelector('button.text-base.justify-center.w-full.font-semibold.cursor-pointer');
+                    if (button && button.offsetParent !== null) {
+                        console.log('💳 Capital One Sorter: Auto-click ' + (i + 1) + '/' + maxClicks);
+                        button.click();
+                        clickCount++;
+                    } else {
+                        console.log('💳 Capital One Sorter: Button not found, stopping');
+                        break;
+                    }
+                }
+                
+                console.log('💳 Capital One Sorter: Auto-click completed (' + clickCount + ' clicks)');
+            })();
+        `;
+        document.documentElement.appendChild(script);
+        script.remove();
+        
+        console.log("💳 Capital One Sorter: Injected page-context auto-click script");
+        
+    } catch (e) {
+        console.log("💳 Capital One Sorter: Error injecting page-context code:", e);
+    }
+    
+    window._capitalOneAutoLoadInProgress = false;
+}
+
+// Also intercept XMLHttpRequest (in case they use that instead of fetch)
+const originalXHROpen = XMLHttpRequest.prototype.open;
+const originalXHRSend = XMLHttpRequest.prototype.send;
+XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+    this._capitalOneUrl = url;
+    this._capitalOneMethod = method;
+    return originalXHROpen.apply(this, [method, url, ...rest]);
+};
+
+XMLHttpRequest.prototype.send = function(...args) {
+    if (this._capitalOneUrl && typeof this._capitalOneUrl === 'string' && 
+        (this._capitalOneUrl.includes('/feed/') || this._capitalOneUrl.includes('cursor')) && 
+        (this._capitalOneUrl.includes('numberOfColumnsInGrid') || this._capitalOneUrl.includes('viewInstanceId') || this._capitalOneUrl.includes('contentSlug'))) {
+        console.log("💳 Capital One Sorter: Intercepted XMLHttpRequest API call:", this._capitalOneMethod, this._capitalOneUrl);
+        
+        try {
+            const fullUrl = this._capitalOneUrl.startsWith('http') ? this._capitalOneUrl : new URL(this._capitalOneUrl, window.location.origin).href;
+            const urlObj = new URL(fullUrl);
+            const cursor = urlObj.searchParams.get('cursor');
+            
+            if (cursor) {
+                window._capitalOneApiInfo = {
+                    url: fullUrl,
+                    cursor: cursor,
+                    baseUrl: fullUrl.split('?')[0],
+                    params: Object.fromEntries(urlObj.searchParams)
+                };
+                console.log("💳 Capital One Sorter: Captured API info from XMLHttpRequest:", {
+                    baseUrl: window._capitalOneApiInfo.baseUrl,
+                    params: Object.keys(window._capitalOneApiInfo.params),
+                    cursor: cursor.substring(0, 50) + '...'
+                });
+            } else {
+                console.log("💳 Capital One Sorter: Found API URL but no cursor parameter");
+            }
+        } catch (e) {
+            console.log("💳 Capital One Sorter: Error parsing XMLHttpRequest URL:", e, "URL was:", this._capitalOneUrl);
+        }
+    }
+    
+    return originalXHRSend.apply(this, args);
+};
+
 console.log("🔍 Capital One Sorter: Initial settings - isSortingEnabled:", isSortingEnabled, "shoppingSortingEnabled:", shoppingSortingEnabled);
 
 if (isShoppingPage) {
@@ -220,22 +389,49 @@ function observeAndSort(container) {
             return; // Skip this mutation event while loading
         }
         
-        // Look for "View More Offers" button in the entire document, not just container
-        let loadMoreButton = document.querySelector('button.text-base.justify-center.w-full.font-semibold');
-        if (!loadMoreButton) {
-            loadMoreButton = document.querySelector('button[class*="text-base"][class*="justify-center"][class*="w-full"][class*="font-semibold"]');
-        }
-        if (!loadMoreButton) {
-            // Look for any button containing "View More Offers" text in entire document
-            const allButtons = document.querySelectorAll('button');
-            loadMoreButton = Array.from(allButtons).find(btn => 
-                btn.textContent.toLowerCase().includes('view more offers') || 
-                btn.textContent.toLowerCase().includes('view more') || 
-                btn.textContent.toLowerCase().includes('load more')
-            );
+        // Look for "View More Offers" button with comprehensive selectors
+        let loadMoreButton = null;
+        
+        // Try multiple button selectors in order of specificity
+        const buttonSelectors = [
+            // New button structure - exact match for the new HTML
+            'button.text-base.justify-center.w-full.font-semibold.cursor-pointer',
+            'button.text-base.justify-center.w-full.font-semibold',
+            // Partial class matches (more flexible)
+            'button[class*="text-base"][class*="justify-center"][class*="w-full"][class*="font-semibold"]',
+            // Generic selectors
+            'button[data-testid*="load-more"]',
+            'button[data-testid*="view-more"]',
+            'button[aria-label*="more offers"]',
+            'button[aria-label*="load more"]',
+            'button[class*="load-more"]',
+            'button[class*="view-more"]'
+        ];
+        
+        for (const selector of buttonSelectors) {
+            loadMoreButton = document.querySelector(selector);
+            if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+                // Check if button is visible (offsetParent is null if hidden)
+                break;
+            }
         }
         
-        if (!loadMoreButton || loadMoreButton.disabled) {
+        // If no button found with selectors, search by text content
+        if (!loadMoreButton || loadMoreButton.disabled || loadMoreButton.offsetParent === null) {
+            const allButtons = document.querySelectorAll('button');
+            loadMoreButton = Array.from(allButtons).find(btn => {
+                const text = btn.textContent.toLowerCase().trim();
+                return (text.includes('view more offers') || 
+                        text.includes('view more') || 
+                        text.includes('load more') ||
+                        text.includes('show more') ||
+                        text.includes('see more')) && 
+                       !btn.disabled && 
+                       btn.offsetParent !== null; // Button must be visible
+            });
+        }
+        
+        if (!loadMoreButton || loadMoreButton.disabled || loadMoreButton.offsetParent === null) {
             // No more offers to load, proceed with sorting
             obs.disconnect();
             updateOriginalWrappers(container);
@@ -261,13 +457,169 @@ function observeAndSort(container) {
 }
 
 async function loadMoreOffers(container, observer) {
-    isLoadingMoreOffers = true; // Set flag to prevent premature sorting
+    isLoadingMoreOffers = true;
     console.log("💳 Capital One Sorter: Starting to load more offers...");
     
+    // Inject page-context auto-click script immediately
+    console.log("💳 Capital One Sorter: Injecting page-context auto-click script...");
+    
+    try {
+        // Set flag to indicate auto-click is in progress
+        window._capitalOneAutoClickInProgress = true;
+        window._capitalOneAutoClickComplete = false;
+        
+        const script = document.createElement('script');
+        script.textContent = `
+            (async function() {
+                console.log("💳 Capital One Sorter: Page-context auto-click started");
+                const maxClicks = 100;
+                const delayMs = 500; // Fast loading - 0.5 seconds between clicks
+                let clickCount = 0;
+                let consecutiveNotFound = 0;
+                
+                function findReactHandler(element) {
+                    const fiberKeys = Object.keys(element).filter(k => 
+                        k.startsWith('__reactFiber') || 
+                        k.startsWith('__reactInternalInstance') ||
+                        k.startsWith('__reactProps')
+                    );
+                    
+                    for (const key of fiberKeys) {
+                        const fiber = element[key];
+                        if (fiber) {
+                            if (fiber.memoizedProps && fiber.memoizedProps.onClick) {
+                                return fiber.memoizedProps.onClick;
+                            }
+                            if (fiber.pendingProps && fiber.pendingProps.onClick) {
+                                return fiber.pendingProps.onClick;
+                            }
+                            if (fiber.return && fiber.return.memoizedProps && fiber.return.memoizedProps.onClick) {
+                                return fiber.return.memoizedProps.onClick;
+                            }
+                        }
+                    }
+                    return null;
+                }
+                
+                for (let i = 0; i < maxClicks; i++) {
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    
+                    const button = document.querySelector('button.text-base.justify-center.w-full.font-semibold.cursor-pointer');
+                    if (button && button.offsetParent !== null && !button.disabled) {
+                        // Only log every 10 clicks to reduce console spam
+                        if ((i + 1) % 10 === 0 || i === 0) {
+                            console.log('💳 Capital One Sorter: Loading more offers... (' + (i + 1) + '/' + maxClicks + ')');
+                        }
+                        
+                        const reactHandler = findReactHandler(button);
+                        if (reactHandler) {
+                            try {
+                                reactHandler({ target: button, currentTarget: button });
+                                clickCount++;
+                                consecutiveNotFound = 0;
+                                continue;
+                            } catch (e) {
+                                console.log('💳 Capital One Sorter: React handler call failed:', e);
+                            }
+                        }
+                        
+                        try {
+                            const rect = button.getBoundingClientRect();
+                            const x = rect.left + rect.width / 2;
+                            const y = rect.top + rect.height / 2;
+                            
+                            button.dispatchEvent(new PointerEvent('pointerover', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }));
+                            button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+                            button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+                            button.focus();
+                            button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+                            button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+                            button.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y, button: 0 }));
+                            button.click();
+                            
+                            clickCount++;
+                            consecutiveNotFound = 0;
+                        } catch (e) {
+                            console.log('💳 Capital One Sorter: Event sequence failed:', e);
+                        }
+                    } else {
+                        consecutiveNotFound++;
+                        if (consecutiveNotFound >= 3) {
+                            console.log('💳 Capital One Sorter: All offers loaded! Button disappeared after ' + clickCount + ' clicks');
+                            break;
+                        }
+                    }
+                }
+                
+                console.log('💳 Capital One Sorter: ✅ Finished loading offers (' + clickCount + ' successful clicks)');
+                
+                // Signal completion to content script via DOM event
+                document.dispatchEvent(new CustomEvent('capitalOneAutoClickComplete', { 
+                    detail: { clickCount: clickCount } 
+                }));
+            })();
+        `;
+        document.documentElement.appendChild(script);
+        script.remove();
+        
+        console.log("💳 Capital One Sorter: Page-context auto-click script injected and running");
+        
+        // Wait for completion event from page context
+        console.log("💳 Capital One Sorter: Waiting for auto-click to complete...");
+        
+        await new Promise((resolve) => {
+            const maxWaitTime = 120000; // 2 minutes max
+            const timeoutId = setTimeout(() => {
+                console.log("💳 Capital One Sorter: Auto-click timeout reached");
+                document.removeEventListener('capitalOneAutoClickComplete', completionHandler);
+                resolve();
+            }, maxWaitTime);
+            
+            const completionHandler = (event) => {
+                clearTimeout(timeoutId);
+                console.log("💳 Capital One Sorter: Auto-click completed! Starting sort immediately...");
+                document.removeEventListener('capitalOneAutoClickComplete', completionHandler);
+                resolve();
+            };
+            
+            document.addEventListener('capitalOneAutoClickComplete', completionHandler);
+        });
+        
+    } catch (e) {
+        console.log("💳 Capital One Sorter: Error injecting page-context script:", e);
+    }
+    
+    // Finish up and sort
+    console.log("💳 Capital One Sorter: Starting sort...");
+    
+    observer.disconnect();
+    updateOriginalWrappers(container);
+    if (isSortingEnabled) {
+        sortOffers(container);
+        console.log("💳 Capital One Sorter: ✅ Sort complete! All offers sorted by rewards.");
+    } else {
+        revertOffers();
+        fadeWaitMessage();
+        console.log("💳 Capital One Sorter: ✅ Complete! Sorting was disabled.");
+    }
+    isSortingInProgress = false;
+    isLoadingMoreOffers = false;
+}
+
+// Old manual approach (backup)
+async function loadMoreOffersManual(container, observer) {
+    isLoadingMoreOffers = true;
+    console.log("💳 Capital One Sorter: Starting manual load approach...");
+    
     let loadMoreAttempts = 0;
-    const maxLoadMoreAttempts = 20; // Increased to allow for multiple loads
+    const maxLoadMoreAttempts = 50;
     let consecutiveNotFound = 0;
-    const maxConsecutiveNotFound = 3; // Stop if button not found 3 times in a row
+    const maxConsecutiveNotFound = 5
 
     // Keep the page active even when tab is not active
     let keepAliveInterval;
@@ -306,39 +658,963 @@ async function loadMoreOffers(container, observer) {
 
     // Use setInterval instead of while loop to keep running in inactive tabs
     const loadInterval = setInterval(() => {
-        // Look for "View More Offers" button in the entire document, not just container
-        let loadMoreButton = document.querySelector('button.text-base.justify-center.w-full.font-semibold');
-        if (!loadMoreButton) {
-            loadMoreButton = document.querySelector('button[class*="text-base"][class*="justify-center"][class*="w-full"][class*="font-semibold"]');
-        }
-        if (!loadMoreButton) {
-            // Look for any button containing "View More Offers" text in entire document
-            const allButtons = document.querySelectorAll('button');
-            loadMoreButton = Array.from(allButtons).find(btn => 
-                btn.textContent.toLowerCase().includes('view more offers') || 
-                btn.textContent.toLowerCase().includes('view more') || 
-                btn.textContent.toLowerCase().includes('load more')
-            );
+        // Look for "View More Offers" button with multiple comprehensive selectors
+        let loadMoreButton = null;
+        
+        // Try multiple button selectors in order of specificity
+        const buttonSelectors = [
+            // New button structure - exact match for the new HTML
+            'button.text-base.justify-center.w-full.font-semibold.cursor-pointer',
+            'button.text-base.justify-center.w-full.font-semibold',
+            // Partial class matches (more flexible)
+            'button[class*="text-base"][class*="justify-center"][class*="w-full"][class*="font-semibold"]',
+            // Generic selectors
+            'button[data-testid*="load-more"]',
+            'button[data-testid*="view-more"]',
+            'button[aria-label*="more offers"]',
+            'button[aria-label*="load more"]',
+            'button[class*="load-more"]',
+            'button[class*="view-more"]'
+        ];
+        
+        for (const selector of buttonSelectors) {
+            loadMoreButton = document.querySelector(selector);
+            if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+                // Check if button is visible (offsetParent is null if hidden)
+                console.log("💳 Capital One Sorter: Found button with selector:", selector);
+                break;
+            }
         }
         
-        if (loadMoreButton && !loadMoreButton.disabled) {
-            console.log("💳 Capital One Sorter: Found load more button:", loadMoreButton.textContent, "- clicking to load more offers");
-            const clickEvent = new MouseEvent('click', { bubbles: true, cancelable: true });
+        // If no button found with selectors, search by text content
+        if (!loadMoreButton || loadMoreButton.disabled || loadMoreButton.offsetParent === null) {
+            const allButtons = document.querySelectorAll('button');
+            loadMoreButton = Array.from(allButtons).find(btn => {
+                const text = btn.textContent.toLowerCase().trim();
+                return (text.includes('view more offers') || 
+                        text.includes('view more') || 
+                        text.includes('load more') ||
+                        text.includes('show more') ||
+                        text.includes('see more')) && 
+                       !btn.disabled && 
+                       btn.offsetParent !== null; // Button must be visible
+            });
+        }
+        
+        if (loadMoreButton && !loadMoreButton.disabled && loadMoreButton.offsetParent !== null) {
+            console.log("💳 Capital One Sorter: Found load more button:", loadMoreButton.textContent.trim(), "- clicking to load more offers (attempt", loadMoreAttempts + 1, ")");
+            
+            // Debug: Inspect the button to understand what's happening
+            console.log("💳 Capital One Sorter: Button debug info:", {
+                hasOnclick: !!loadMoreButton.onclick,
+                onclickType: typeof loadMoreButton.onclick,
+                onclickValue: loadMoreButton.onclick ? loadMoreButton.onclick.toString().substring(0, 200) : null,
+                hasEventListeners: typeof getEventListeners === 'function' ? getEventListeners(loadMoreButton) : 'N/A (getEventListeners not available)',
+                allKeys: Object.keys(loadMoreButton).filter(k => k.startsWith('__react') || k.startsWith('on')),
+                parentKeys: loadMoreButton.parentElement ? Object.keys(loadMoreButton.parentElement).filter(k => k.startsWith('__react') || k.startsWith('on')) : [],
+                attributes: Array.from(loadMoreButton.attributes).map(a => `${a.name}="${a.value.substring(0, 50)}"`).join(', ')
+            });
+            
+            // Set up manual click capture - this will help us see what React does
+            if (loadMoreAttempts === 1) {
+                // Only set up once on first attempt
+                const manualClickCapture = (e) => {
+                    if (e.target === loadMoreButton || loadMoreButton.contains(e.target)) {
+                        const allProps = Object.keys(e);
+                        console.log("💳 Capital One Sorter: MANUAL CLICK CAPTURED!");
+                        console.log("💳 Capital One Sorter: Full event object:", e);
+                        console.log("💳 Capital One Sorter: All event properties:", allProps);
+                        console.log("💳 Capital One Sorter: React-related properties:", allProps.filter(k => k.includes('react') || k.includes('React') || k.startsWith('_')));
+                        console.log("💳 Capital One Sorter: Event details:", {
+                            target: e.target,
+                            currentTarget: e.currentTarget,
+                            isTrusted: e.isTrusted,
+                            type: e.type,
+                            bubbles: e.bubbles,
+                            cancelable: e.cancelable,
+                            defaultPrevented: e.defaultPrevented,
+                            timeStamp: e.timeStamp
+                        });
+                        
+                        // Try to access React properties that might exist
+                        const reactProps = ['_reactName', '_targetInst', '_dispatchListeners', '_dispatchInstances', 
+                                           'nativeEvent', '_reactInternalFiber', '_reactInternalInstance'];
+                        reactProps.forEach(prop => {
+                            if (e[prop] !== undefined) {
+                                console.log(`💳 Capital One Sorter: Found React property ${prop}:`, e[prop]);
+                            }
+                        });
+                        
+                        // Try to find React Fiber from the event target
+                        const reactKey = Object.keys(e.target).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+                        if (reactKey) {
+                            console.log("💳 Capital One Sorter: Found React key from manual click:", reactKey, e.target[reactKey]);
+                            
+                            // Try to traverse the Fiber tree to find the handler
+                            let fiber = e.target[reactKey];
+                            let depth = 0;
+                            while (fiber && depth < 20) {
+                                if (fiber.memoizedProps && fiber.memoizedProps.onClick) {
+                                    console.log("💳 Capital One Sorter: Found onClick handler in Fiber at depth", depth, fiber.memoizedProps.onClick);
+                                    // Store the handler for later use
+                                    window._capitalOneClickHandler = fiber.memoizedProps.onClick;
+                                    window._capitalOneClickFiber = fiber;
+                                }
+                                fiber = fiber.return || fiber._owner;
+                                depth++;
+                            }
+                        } else {
+                            // If we didn't find it immediately, check after a delay
+                            if (window._checkReactAfterClick) {
+                                window._checkReactAfterClick();
+                            }
+                        }
+                        
+                        // Try to find the handler function that React will call
+                        if (e._dispatchListeners && e._dispatchListeners.length > 0) {
+                            console.log("💳 Capital One Sorter: Found dispatch listeners:", e._dispatchListeners);
+                            window._capitalOneDispatchListeners = e._dispatchListeners;
+                        }
+                        
+                        if (e._dispatchInstances && e._dispatchInstances.length > 0) {
+                            console.log("💳 Capital One Sorter: Found dispatch instances:", e._dispatchInstances);
+                            window._capitalOneDispatchInstances = e._dispatchInstances;
+                        }
+                        
+                        // Also try to find React Fiber by checking all parent elements
+                        let parent = e.target.parentElement;
+                        let parentDepth = 0;
+                        while (parent && parentDepth < 10) {
+                            const parentReactKey = Object.keys(parent).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+                            if (parentReactKey) {
+                                console.log("💳 Capital One Sorter: Found React on parent at depth", parentDepth, parentReactKey);
+                                let parentFiber = parent[parentReactKey];
+                                let fiberDepth = 0;
+                                while (parentFiber && fiberDepth < 20) {
+                                    if (parentFiber.memoizedProps && parentFiber.memoizedProps.onClick) {
+                                        console.log("💳 Capital One Sorter: Found onClick on parent Fiber at depth", fiberDepth);
+                                        window._capitalOneClickHandler = parentFiber.memoizedProps.onClick;
+                                        window._capitalOneClickFiber = parentFiber;
+                                    }
+                                    parentFiber = parentFiber.return || parentFiber._owner;
+                                    fiberDepth++;
+                                }
+                                break;
+                            }
+                            parent = parent.parentElement;
+                            parentDepth++;
+                        }
+                    }
+                };
+                
+                // Listen at capture phase to catch before React
+                document.addEventListener('click', manualClickCapture, true);
+                document.addEventListener('mousedown', manualClickCapture, true);
+                
+                // Also listen at bubble phase
+                loadMoreButton.addEventListener('click', (e) => {
+                    console.log("💳 Capital One Sorter: Manual click on button (bubble phase):", {
+                        isTrusted: e.isTrusted,
+                        defaultPrevented: e.defaultPrevented,
+                        allKeys: Object.keys(e)
+                    });
+                }, false);
+                
+                // Try to intercept React's event processing by watching for React's event listener
+                // React attaches listeners to document, so let's check after a manual click
+                const checkReactAfterClick = () => {
+                    // Wait a bit for React to process
+                    setTimeout(() => {
+                        // Try to find React Fiber now that it might be attached
+                        const reactKey = Object.keys(loadMoreButton).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+                        if (reactKey) {
+                            console.log("💳 Capital One Sorter: Found React key after manual click:", reactKey);
+                            let fiber = loadMoreButton[reactKey];
+                            let depth = 0;
+                            while (fiber && depth < 20) {
+                                if (fiber.memoizedProps && fiber.memoizedProps.onClick) {
+                                    console.log("💳 Capital One Sorter: Found onClick handler after manual click at depth", depth);
+                                    window._capitalOneClickHandler = fiber.memoizedProps.onClick;
+                                    window._capitalOneClickFiber = fiber;
+                                }
+                                fiber = fiber.return || fiber._owner;
+                                depth++;
+                            }
+                        }
+                    }, 100);
+                };
+                
+                // Store the function to call after manual click
+                window._checkReactAfterClick = checkReactAfterClick;
+            }
+            
+            // Try multiple click methods for better compatibility
+            let clickSuccess = false;
+            
+            // Method 0: Try calling the API directly (bypass React entirely)
+            if (!clickSuccess) {
+                try {
+                    console.log("💳 Capital One Sorter: Attempting to call API directly to load more offers...");
+                    
+                    // Try to get cursor from intercepted fetch calls first
+                    let cursor = null;
+                    if (window._capitalOneApiInfo && window._capitalOneApiInfo.cursor) {
+                        cursor = window._capitalOneApiInfo.cursor;
+                        console.log("💳 Capital One Sorter: Using cursor from intercepted fetch call");
+                    }
+                    
+                    // Fallback: Try to extract cursor from Performance API
+                    if (!cursor) {
+                        try {
+                            const perfEntries = performance.getEntriesByType('resource');
+                            for (let i = perfEntries.length - 1; i >= 0; i--) {
+                                const entry = perfEntries[i];
+                                if (entry.name && entry.name.includes('/feed/') && entry.name.includes('cursor')) {
+                                    try {
+                                        const urlObj = new URL(entry.name);
+                                        const foundCursor = urlObj.searchParams.get('cursor');
+                                        if (foundCursor) {
+                                            cursor = foundCursor;
+                                            console.log("💳 Capital One Sorter: Found cursor from Performance API");
+                                            break;
+                                        }
+                                    } catch (e) {
+                                        // Continue
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            console.log("💳 Capital One Sorter: Performance API check failed:", e);
+                        }
+                    }
+                    
+                    // If we have a cursor, make the API call
+                    if (cursor) {
+                        console.log("💳 Capital One Sorter: Found cursor, making API call...");
+                        
+                        // Decode the cursor to update it
+                        try {
+                            const decoded = JSON.parse(atob(cursor));
+                            console.log("💳 Capital One Sorter: Decoded cursor:", decoded);
+                            
+                            // Update the cursor (increment gridRow or update tilesShown)
+                            decoded.tilesShown = (decoded.tilesShown || 0) + 20;
+                            decoded.gridRow = (decoded.gridRow || 0) + 1;
+                            
+                            const newCursor = btoa(JSON.stringify(decoded));
+                            
+                            // Make the API call using captured API info
+                            let apiUrl;
+                            if (window._capitalOneApiInfo && window._capitalOneApiInfo.baseUrl) {
+                                const params = new URLSearchParams(window._capitalOneApiInfo.params);
+                                params.set('cursor', newCursor);
+                                apiUrl = window._capitalOneApiInfo.baseUrl + '?' + params.toString();
+                                console.log("💳 Capital One Sorter: Using captured API URL pattern");
+                            } else {
+                                // Fallback: construct from current URL pattern
+                                // Pattern: /feed/{hash}?numberOfColumnsInGrid=5&viewInstanceId={id}&contentSlug={slug}&cursor={cursor}
+                                const urlParams = new URLSearchParams(window.location.search);
+                                const viewInstanceId = urlParams.get('viewInstanceId') || '07366aa0-ee02-4e2f-bb9d-4a7e2592c395';
+                                const numberOfColumns = urlParams.get('numberOfColumnsInGrid') || '5';
+                                const contentSlug = urlParams.get('contentSlug') || 'ease-web-l1';
+                                
+                                // The hash appears to be URL encoded: 0TrcMwIchicBXdq7Oc6YvyeE%2FGaZ7h20enHvHkE1KfU%3D
+                                const hash = '0TrcMwIchicBXdq7Oc6YvyeE/GaZ7h20enHvHkE1KfU=';
+                                const encodedHash = encodeURIComponent(hash);
+                                // Make sure it's an absolute URL
+                                apiUrl = `${window.location.origin}/feed/${encodedHash}?numberOfColumnsInGrid=${numberOfColumns}&viewInstanceId=${viewInstanceId}&contentSlug=${contentSlug}&cursor=${encodeURIComponent(newCursor)}`;
+                                console.log("💳 Capital One Sorter: Constructed API URL from current page");
+                            }
+                            
+                            console.log("💳 Capital One Sorter: Making API call to:", apiUrl.substring(0, 150) + '...');
+                            
+                            fetch(apiUrl, {
+                                method: 'GET',
+                                credentials: 'include',
+                                headers: {
+                                    'Accept': '*/*',
+                                    'Accept-Language': 'en-US,en;q=0.9',
+                                    'Sec-Fetch-Dest': 'empty',
+                                    'Sec-Fetch-Mode': 'cors',
+                                    'Sec-Fetch-Site': 'same-origin',
+                                }
+                            }).then(response => {
+                                if (response.ok) {
+                                    console.log("💳 Capital One Sorter: API call successful!");
+                                    clickSuccess = true;
+                                    return response.json().then(data => {
+                                        console.log("💳 Capital One Sorter: API response received, data length:", JSON.stringify(data).length);
+                                        console.log("💳 Capital One Sorter: Response keys:", Object.keys(data));
+                                        console.log("💳 Capital One Sorter: Response preview:", JSON.stringify(data).substring(0, 500));
+                                        
+                                        // Store the response for potential manual processing
+                                        window._capitalOneLastApiResponse = data;
+                                        
+                                        // Try to trigger React to process the response
+                                        try {
+                                            // Dispatch a storage event
+                                            window.dispatchEvent(new StorageEvent('storage', {
+                                                key: 'capitalone-offers-update',
+                                                newValue: JSON.stringify({ timestamp: Date.now() })
+                                            }));
+                                            
+                                            // Trigger a mutation on the container
+                                            const container = document.querySelector('[data-testid="feed-grid"]') || 
+                                                             document.querySelector('[class*="grid"]') ||
+                                                             document.querySelector('main');
+                                            if (container) {
+                                                const tempDiv = document.createElement('div');
+                                                tempDiv.style.display = 'none';
+                                                container.appendChild(tempDiv);
+                                                setTimeout(() => {
+                                                    container.removeChild(tempDiv);
+                                                }, 100);
+                                            }
+                                            
+                                            // Wait and check if offers updated
+                                            setTimeout(() => {
+                                                const beforeCount = document.querySelectorAll('div[role="button"][data-testid^="feed-tile-"]').length;
+                                                console.log("💳 Capital One Sorter: Offer count before API call:", beforeCount);
+                                                
+                                                setTimeout(() => {
+                                                    const afterCount = document.querySelectorAll('div[role="button"][data-testid^="feed-tile-"]').length;
+                                                    console.log("💳 Capital One Sorter: Offer count after API call:", afterCount);
+                                                    
+                                                    if (afterCount > beforeCount) {
+                                                        console.log("💳 Capital One Sorter: Offers updated successfully! (+" + (afterCount - beforeCount) + " offers)");
+                                                    } else if (afterCount === beforeCount && data.data && data.data.length > 0) {
+                                                        console.log("💳 Capital One Sorter: API returned", data.data.length, "offers but React didn't process them");
+                                                        console.log("💳 Capital One Sorter: Attempting to trigger button click after API response...");
+                                                        setTimeout(() => {
+                                                            if (loadMoreButton && loadMoreButton.offsetParent !== null) {
+                                                                loadMoreButton.click();
+                                                            }
+                                                        }, 200);
+                                                    }
+                                                }, 1500);
+                                            }, 500);
+                                        } catch (e) {
+                                            console.log("💳 Capital One Sorter: Error triggering update:", e);
+                                        }
+                                        
+                                        return data;
+                                    });
+                                } else {
+                                    console.log("💳 Capital One Sorter: API call failed:", response.status, response.statusText);
+                                    return response.text().then(text => {
+                                        console.log("💳 Capital One Sorter: Error response:", text.substring(0, 200));
+                                    });
+                                }
+                            }).catch(error => {
+                                console.log("💳 Capital One Sorter: API call error:", error);
+                            });
+                        } catch (e) {
+                            console.log("💳 Capital One Sorter: Error processing cursor:", e);
+                        }
+                    } else {
+                        console.log("💳 Capital One Sorter: No cursor found, will wait for manual click to capture it");
+                        
+                        // Try to extract cursor from localStorage or URL hash as fallback
+                        try {
+                            if (window.location.hash) {
+                                const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                                const hashCursor = hashParams.get('cursor');
+                                if (hashCursor) {
+                                    cursor = hashCursor;
+                                    console.log("💳 Capital One Sorter: Found cursor in URL hash");
+                                }
+                            }
+                            
+                            if (!cursor) {
+                                for (let i = 0; i < localStorage.length; i++) {
+                                    const key = localStorage.key(i);
+                                    const value = localStorage.getItem(key);
+                                    if (value && value.includes('cursor') && value.includes('gridRow')) {
+                                        try {
+                                            const parsed = JSON.parse(value);
+                                            if (parsed.cursor) {
+                                                cursor = parsed.cursor;
+                                                console.log("💳 Capital One Sorter: Found cursor in localStorage");
+                                                break;
+                                            }
+                                        } catch (e) {
+                                            const cursorMatch = value.match(/"cursor"\s*:\s*"([^"]+)"/);
+                                            if (cursorMatch) {
+                                                cursor = cursorMatch[1];
+                                                console.log("💳 Capital One Sorter: Extracted cursor from localStorage");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // If found, make API call
+                            if (cursor) {
+                                try {
+                                    const decoded = JSON.parse(atob(cursor));
+                                    decoded.tilesShown = (decoded.tilesShown || 0) + 20;
+                                    decoded.gridRow = (decoded.gridRow || 0) + 1;
+                                    const newCursor = btoa(JSON.stringify(decoded));
+                                    
+                                    const urlParams = new URLSearchParams(window.location.search);
+                                    const viewInstanceId = urlParams.get('viewInstanceId') || '07366aa0-ee02-4e2f-bb9d-4a7e2592c395';
+                                    const numberOfColumns = urlParams.get('numberOfColumnsInGrid') || '5';
+                                    const contentSlug = urlParams.get('contentSlug') || 'ease-web-l1';
+                                    const hash = '0TrcMwIchicBXdq7Oc6YvyeE/GaZ7h20enHvHkE1KfU=';
+                                    const encodedHash = encodeURIComponent(hash);
+                                    // Make sure it's an absolute URL
+                                    const apiUrl = `${window.location.origin}/feed/${encodedHash}?numberOfColumnsInGrid=${numberOfColumns}&viewInstanceId=${viewInstanceId}&contentSlug=${contentSlug}&cursor=${encodeURIComponent(newCursor)}`;
+                                    
+                                    fetch(apiUrl, {
+                                        method: 'GET',
+                                        credentials: 'include',
+                                        headers: { 'Accept': '*/*' }
+                                    }).then(response => {
+                                        if (response.ok) {
+                                            console.log("💳 Capital One Sorter: API call successful!");
+                                            clickSuccess = true;
+                                            return response.json();
+                                        }
+                                    }).catch(error => {
+                                        console.log("💳 Capital One Sorter: API call error:", error);
+                                    });
+                                } catch (e) {
+                                    console.log("💳 Capital One Sorter: Error processing cursor:", e);
+                                }
+                            }
+                        } catch (e) {
+                            console.log("💳 Capital One Sorter: Error searching for cursor:", e);
+                        }
+                    }
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: Direct API call failed:", e);
+                }
+            }
+            
+            // Method 0.1: Try using the handler we captured from manual click
+            if (!clickSuccess && window._capitalOneClickHandler) {
+                try {
+                    console.log("💳 Capital One Sorter: Using captured click handler from manual click");
+                    const syntheticEvent = {
+                        nativeEvent: new MouseEvent('click', { bubbles: true, cancelable: true }),
+                        currentTarget: loadMoreButton,
+                        target: loadMoreButton,
+                        preventDefault: () => {},
+                        stopPropagation: () => {},
+                        isDefaultPrevented: () => false,
+                        isPropagationStopped: () => false
+                    };
+                    window._capitalOneClickHandler(syntheticEvent);
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: Captured handler executed");
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: Captured handler failed:", e);
+                }
+            }
+            
+            // Method 0.25: Try to find and call the handler by searching the DOM tree more thoroughly
+            if (!clickSuccess) {
+                try {
+                    console.log("💳 Capital One Sorter: Searching for React handler in DOM tree...");
+                    
+                    // Check all parent elements and siblings for React Fiber
+                    let element = loadMoreButton;
+                    let depth = 0;
+                    let foundAnyReactKeys = false;
+                    
+                    while (element && depth < 15) {
+                        // Check all possible React Fiber property names - try both Object.keys and Object.getOwnPropertyNames
+                        const allKeys = [...Object.keys(element), ...Object.getOwnPropertyNames(element)];
+                        const reactKeys = allKeys.filter(k => 
+                            k.startsWith('__reactFiber') || 
+                            k.startsWith('__reactInternalInstance') ||
+                            k.startsWith('__reactContainer') ||
+                            (k.includes('react') && !k.startsWith('__'))
+                        );
+                        
+                        if (reactKeys.length > 0) {
+                            foundAnyReactKeys = true;
+                            console.log("💳 Capital One Sorter: Found React keys on element:", element.tagName, reactKeys);
+                            
+                            for (const reactKey of reactKeys) {
+                                try {
+                                    let fiber = element[reactKey];
+                                    let fiberDepth = 0;
+                                    
+                                    // Traverse fiber tree looking for onClick
+                                    while (fiber && fiberDepth < 25) {
+                                        // Check multiple possible locations for onClick
+                                        if (fiber.memoizedProps?.onClick) {
+                                            console.log("💳 Capital One Sorter: Found onClick in memoizedProps!");
+                                            try {
+                                                fiber.memoizedProps.onClick({
+                                                    nativeEvent: new MouseEvent('click'),
+                                                    currentTarget: loadMoreButton,
+                                                    target: loadMoreButton
+                                                });
+                                                clickSuccess = true;
+                                                console.log("💳 Capital One Sorter: onClick handler called successfully!");
+                                                break;
+                                            } catch (e) {
+                                                console.log("💳 Capital One Sorter: onClick call failed:", e);
+                                            }
+                                        }
+                                        
+                                        if (fiber.pendingProps?.onClick) {
+                                            console.log("💳 Capital One Sorter: Found onClick in pendingProps!");
+                                            try {
+                                                fiber.pendingProps.onClick({
+                                                    nativeEvent: new MouseEvent('click'),
+                                                    currentTarget: loadMoreButton,
+                                                    target: loadMoreButton
+                                                });
+                                                clickSuccess = true;
+                                                console.log("💳 Capital One Sorter: onClick handler called successfully!");
+                                                break;
+                                            } catch (e) {
+                                                console.log("💳 Capital One Sorter: onClick call failed:", e);
+                                            }
+                                        }
+                                        
+                                        // Check child fibers
+                                        if (fiber.child) {
+                                            fiber = fiber.child;
+                                        } else if (fiber.sibling) {
+                                            fiber = fiber.sibling;
+                                        } else {
+                                            fiber = fiber.return;
+                                        }
+                                        fiberDepth++;
+                                    }
+                                    
+                                    if (clickSuccess) break;
+                                } catch (e) {
+                                    console.log("💳 Capital One Sorter: Error accessing React key:", reactKey, e);
+                                }
+                            }
+                            
+                            if (clickSuccess) break;
+                        }
+                        
+                        element = element.parentElement;
+                        depth++;
+                    }
+                    
+                    if (!foundAnyReactKeys) {
+                        console.log("💳 Capital One Sorter: No React keys found on button or any parent elements");
+                    }
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: DOM tree search failed:", e);
+                }
+            }
+            
+            // Method 0.5: Try to intercept and bypass React's isTrusted check
+            if (!clickSuccess) {
+                try {
+                    // Try to create an event that appears more trusted by using Object.defineProperty
+                    // This might work in some browsers
+                    const clickEvent = new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        composed: true,
+                        detail: 1
+                    });
+                    
+                    // Try to override isTrusted (this usually doesn't work, but worth trying)
+                    try {
+                        Object.defineProperty(clickEvent, 'isTrusted', {
+                            value: true,
+                            writable: false,
+                            configurable: false
+                        });
+                        console.log("💳 Capital One Sorter: Attempted to set isTrusted to true");
+                    } catch (e) {
+                        // Can't set isTrusted - that's expected
+                    }
+                    
+                    // Dispatch from button and let it bubble
             loadMoreButton.dispatchEvent(clickEvent);
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: Dispatched event with isTrusted override attempt");
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: isTrusted override failed:", e);
+                }
+            }
+            
+            // Method 0.6: Try to access React's event system by finding and calling its document listener
+            if (!clickSuccess) {
+                try {
+                    // React uses event delegation - find its listener on document
+                    // We need to access the actual event listener function
+                    // Try multiple approaches to find React's handler
+                    
+                    // Approach 1: Use getEventListeners if available (Chrome DevTools)
+                    if (typeof getEventListeners === 'function') {
+                        const docListeners = getEventListeners(document);
+                        if (docListeners && docListeners.click) {
+                            console.log("💳 Capital One Sorter: Found document click listeners:", docListeners.click.length);
+                            // React's listener is usually the first one or has specific characteristics
+                            for (let i = 0; i < docListeners.click.length; i++) {
+                                const listener = docListeners.click[i];
+                                const listenerStr = listener.listener.toString();
+                                // React's listener often contains specific patterns
+                                if (listenerStr.includes('react') || listenerStr.includes('React') || 
+                                    listenerStr.includes('dispatchEvent') || listenerStr.length > 1000) {
+                                    console.log("💳 Capital One Sorter: Found potential React listener, trying to trigger...");
+                                    const clickEvent = new MouseEvent('click', {
+                                        bubbles: true,
+                                        cancelable: true,
+                                        view: window,
+                                        target: loadMoreButton,
+                                        currentTarget: document
+                                    });
+                                    try {
+                                        listener.listener.call(document, clickEvent);
+                                        clickSuccess = true;
+                                        console.log("💳 Capital One Sorter: React listener executed via getEventListeners");
+                                        break;
+                                    } catch (e) {
+                                        console.log("💳 Capital One Sorter: Listener call failed:", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Approach 2: Dispatch event from button and let it bubble to document (React's way)
+                    if (!clickSuccess) {
+                        // Create event at button level and let it bubble naturally
+                        const clickEvent = new MouseEvent('click', {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                            composed: true,
+                            detail: 1,
+                            button: 0,
+                            buttons: 0
+                        });
+                        
+                        // Dispatch from button - it will bubble to document where React listens
+                        loadMoreButton.dispatchEvent(clickEvent);
+                        clickSuccess = true;
+                        console.log("💳 Capital One Sorter: Dispatched click event from button (bubbling to document)");
+                    }
+                    
+                    // Approach 3: Also try native click() which should trigger all handlers
+                    if (!clickSuccess) {
+                        try {
+                            loadMoreButton.click();
+                            clickSuccess = true;
+                            console.log("💳 Capital One Sorter: Used native .click() method");
+                        } catch (e) {
+                            console.log("💳 Capital One Sorter: Native .click() failed:", e);
+                        }
+                    }
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: React event system access failed:", e);
+                }
+            }
+            
+            // Method 1: Try React's event system - check button and all parents
+            try {
+                // Check button and all parent elements for React Fiber
+                let elementToCheck = loadMoreButton;
+                let foundReactFiber = false;
+                
+                while (elementToCheck && !foundReactFiber) {
+                    const reactKey = Object.keys(elementToCheck).find(key => key.startsWith('__reactFiber') || key.startsWith('__reactInternalInstance'));
+                    if (reactKey) {
+                        const fiber = elementToCheck[reactKey];
+                        console.log("💳 Capital One Sorter: Found React Fiber key:", reactKey, "on element:", elementToCheck.tagName);
+                        foundReactFiber = true;
+                        
+                        // Traverse React Fiber tree to find onClick handler
+                        let currentFiber = fiber;
+                        let depth = 0;
+                        const maxDepth = 15; // Increased depth
+                        
+                        while (currentFiber && depth < maxDepth && !clickSuccess) {
+                            // Try memoizedProps
+                            if (currentFiber.memoizedProps && currentFiber.memoizedProps.onClick) {
+                                const handler = currentFiber.memoizedProps.onClick;
+                                console.log("💳 Capital One Sorter: Found onClick in memoizedProps at depth", depth);
+                                try {
+                                    handler({ nativeEvent: {}, currentTarget: loadMoreButton, target: loadMoreButton });
+                                    clickSuccess = true;
+                                    console.log("💳 Capital One Sorter: React memoizedProps.onClick executed");
+                                } catch (e) {
+                                    console.log("💳 Capital One Sorter: Error calling memoizedProps.onClick:", e);
+                                }
+                            }
+                            
+                            // Try pendingProps
+                            if (!clickSuccess && currentFiber.pendingProps && currentFiber.pendingProps.onClick) {
+                                const handler = currentFiber.pendingProps.onClick;
+                                console.log("💳 Capital One Sorter: Found onClick in pendingProps at depth", depth);
+                                try {
+                                    handler({ nativeEvent: {}, currentTarget: loadMoreButton, target: loadMoreButton });
+                                    clickSuccess = true;
+                                    console.log("💳 Capital One Sorter: React pendingProps.onClick executed");
+                                } catch (e) {
+                                    console.log("💳 Capital One Sorter: Error calling pendingProps.onClick:", e);
+                                }
+                            }
+                            
+                            // Try stateNode
+                            if (!clickSuccess && currentFiber.stateNode) {
+                                if (typeof currentFiber.stateNode.onClick === 'function') {
+                                    const handler = currentFiber.stateNode.onClick;
+                                    console.log("💳 Capital One Sorter: Found onClick in stateNode at depth", depth);
+                                    try {
+                                        handler();
+                                        clickSuccess = true;
+                                        console.log("💳 Capital One Sorter: React stateNode.onClick executed");
+                                    } catch (e) {
+                                        console.log("💳 Capital One Sorter: Error calling stateNode.onClick:", e);
+                                    }
+                                }
+                                // Also check props on stateNode
+                                if (!clickSuccess && currentFiber.stateNode.props && currentFiber.stateNode.props.onClick) {
+                                    const handler = currentFiber.stateNode.props.onClick;
+                                    console.log("💳 Capital One Sorter: Found onClick in stateNode.props at depth", depth);
+                                    try {
+                                        handler({ nativeEvent: {}, currentTarget: loadMoreButton, target: loadMoreButton });
+                                        clickSuccess = true;
+                                        console.log("💳 Capital One Sorter: React stateNode.props.onClick executed");
+                                    } catch (e) {
+                                        console.log("💳 Capital One Sorter: Error calling stateNode.props.onClick:", e);
+                                    }
+                                }
+                            }
+                            
+                            // Move up the tree
+                            if (!clickSuccess) {
+                                currentFiber = currentFiber.return || currentFiber._owner || currentFiber.owner;
+                                depth++;
+                            }
+                        }
+                    }
+                    elementToCheck = elementToCheck.parentElement;
+                }
+                
+                if (!foundReactFiber) {
+                    console.log("💳 Capital One Sorter: No React Fiber key found on button or parents");
+                }
+            } catch (e) {
+                console.log("💳 Capital One Sorter: React event failed:", e, e.stack);
+            }
+            
+            // Method 2: Try direct onclick handler if it exists
+            if (!clickSuccess && loadMoreButton.onclick) {
+                try {
+                    console.log("💳 Capital One Sorter: Attempting to call onclick handler...");
+                    const result = loadMoreButton.onclick();
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: Direct onclick() executed, result:", result);
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: Direct onclick() failed:", e, e.stack);
+                }
+            }
+            
+            // Debug: Monitor if events are reaching document level (where React listens)
+            if (loadMoreAttempts <= 3) {
+                // Only add debug listeners for first few attempts to avoid spam
+                const docDebugListener = (e) => {
+                    if (e.target === loadMoreButton || loadMoreButton.contains(e.target)) {
+                        console.log("💳 Capital One Sorter: DEBUG - Click event reached document level!", {
+                            type: e.type,
+                            isTrusted: e.isTrusted,
+                            target: e.target.tagName,
+                            bubbles: e.bubbles,
+                            defaultPrevented: e.defaultPrevented
+                        });
+                    }
+                };
+                
+                // Listen at capture phase (before React processes it)
+                document.addEventListener('click', docDebugListener, true);
+                
+                // Remove after a delay
+                setTimeout(() => {
+                    document.removeEventListener('click', docDebugListener, true);
+                }, 2000);
+            }
+            
+            // Method 3: Create a full user interaction sequence (mousedown -> mouseup -> click)
+            if (!clickSuccess) {
+                try {
+                    const rect = loadMoreButton.getBoundingClientRect();
+                    const x = rect.left + rect.width / 2;
+                    const y = rect.top + rect.height / 2;
+                    
+                    // Create a full sequence of events like a real user would generate
+                    const mouseDown = new MouseEvent('mousedown', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true,
+                        buttons: 1,
+                        button: 0,
+                        clientX: x,
+                        clientY: y,
+                        screenX: window.screenX + x,
+                        screenY: window.screenY + y
+                    });
+                    
+                    const mouseUp = new MouseEvent('mouseup', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true,
+                        buttons: 0,
+                        button: 0,
+                        clientX: x,
+                        clientY: y,
+                        screenX: window.screenX + x,
+                        screenY: window.screenY + y
+                    });
+                    
+                    const clickEvent = new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true,
+                        buttons: 0,
+                        button: 0,
+                        detail: 1,
+                        clientX: x,
+                        clientY: y,
+                        screenX: window.screenX + x,
+                        screenY: window.screenY + y
+                    });
+                    
+                    // Dispatch in the correct sequence
+                    loadMoreButton.dispatchEvent(mouseDown);
+                    setTimeout(() => {
+                        loadMoreButton.dispatchEvent(mouseUp);
+                        setTimeout(() => {
+                            loadMoreButton.dispatchEvent(clickEvent);
+                            console.log("💳 Capital One Sorter: Full interaction sequence dispatched (mousedown -> mouseup -> click)");
+                        }, 10);
+                    }, 10);
+                    
+                    clickSuccess = true;
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: Full interaction sequence failed:", e);
+                }
+            }
+            
+            // Method 4: Direct click (fallback)
+            if (!clickSuccess) {
+                try {
+                    loadMoreButton.click();
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: Direct click() executed");
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: Direct click() failed:", e);
+                }
+            }
+            
+            // Method 5: PointerEvent (works better with touch-manipulation)
+            if (!clickSuccess) {
+                try {
+                    const pointerDown = new PointerEvent('pointerdown', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        pointerId: 1,
+                        pointerType: 'mouse',
+                        isPrimary: true
+                    });
+                    const pointerUp = new PointerEvent('pointerup', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        pointerId: 1,
+                        pointerType: 'mouse',
+                        isPrimary: true
+                    });
+                    const clickEvent = new PointerEvent('click', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        pointerId: 1,
+                        pointerType: 'mouse',
+                        isPrimary: true
+                    });
+                    loadMoreButton.dispatchEvent(pointerDown);
+                    loadMoreButton.dispatchEvent(pointerUp);
+                    loadMoreButton.dispatchEvent(clickEvent);
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: PointerEvent sequence executed");
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: PointerEvent sequence failed:", e);
+                }
+            }
+            
+            // Method 6: MouseEvent with mousedown and mouseup
+            if (!clickSuccess) {
+                try {
+                    const mouseDown = new MouseEvent('mousedown', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        buttons: 1
+                    });
+                    const mouseUp = new MouseEvent('mouseup', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        buttons: 1
+                    });
+                    const clickEvent = new MouseEvent('click', { 
+                        bubbles: true, 
+                        cancelable: true,
+                        view: window,
+                        buttons: 1
+                    });
+                    loadMoreButton.dispatchEvent(mouseDown);
+                    loadMoreButton.dispatchEvent(mouseUp);
+                    loadMoreButton.dispatchEvent(clickEvent);
+                    clickSuccess = true;
+                    console.log("💳 Capital One Sorter: MouseEvent sequence executed");
+                } catch (e) {
+                    console.log("💳 Capital One Sorter: MouseEvent sequence failed:", e);
+                }
+            }
+            
+            // Method 7: Try clicking parent if it exists and is clickable
+            if (!clickSuccess) {
+                const parent = loadMoreButton.parentElement;
+                if (parent && (parent.onclick || parent.getAttribute('onclick'))) {
+                    try {
+                        parent.click();
+                        console.log("💳 Capital One Sorter: Clicked parent element");
+                    } catch (e) {
+                        console.log("💳 Capital One Sorter: Parent click failed:", e);
+                    }
+                }
+            }
+            
             consecutiveNotFound = 0; // Reset counter since we found and clicked button
+            
+            // Add a small delay after clicking to allow the page to process
+            setTimeout(() => {
+                console.log("💳 Capital One Sorter: Click processed, continuing to look for more buttons...");
+            }, 300);
         } else {
             consecutiveNotFound++;
-            console.log("💳 Capital One Sorter: Load more button not found or disabled (attempt", consecutiveNotFound, "of", maxConsecutiveNotFound, ")");
+            console.log("💳 Capital One Sorter: Load more button not found or disabled (attempt", loadMoreAttempts + 1, ", consecutive not found:", consecutiveNotFound, "of", maxConsecutiveNotFound, ")");
         }
         
         loadMoreAttempts++;
         
         // Check if we should stop
         if (loadMoreAttempts >= maxLoadMoreAttempts || consecutiveNotFound >= maxConsecutiveNotFound) {
+            console.log("💳 Capital One Sorter: Stopping load more attempts. Total attempts:", loadMoreAttempts, "Consecutive not found:", consecutiveNotFound);
             clearInterval(loadInterval);
             finishOffersLoading();
         }
-    }, 200); // 200ms between attempts
+    }, 500); // Increased to 500ms between attempts to allow more time for loading
     
     // Function to finish loading when interval stops
     function finishOffersLoading() {
